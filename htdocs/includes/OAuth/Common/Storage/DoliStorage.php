@@ -1,6 +1,6 @@
 <?php
 /*
- * Copyright (C) 2015       Frederic France      <frederic.france@free.fr>
+ * Copyright (C) 2015       Frédéric France      <frederic.france@free.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,8 @@ use OAuth\Common\Storage\Exception\TokenNotFoundException;
 use OAuth\Common\Storage\Exception\AuthorizationStateNotFoundException;
 use DoliDB;
 
+
+
 /**
  * Class to manage storage of OAUTH2 in Dolibarr
  */
@@ -53,28 +55,33 @@ class DoliStorage implements TokenStorageInterface
 	 */
 	public $errors = array();
 
-	private $conf;
 	private $key;
 	//private $stateKey;
 	private $keyforprovider;
+	public $token;
+	private $tenant;
 
 	public $state;
 	public $date_creation;
 	public $date_modification;
 
+	public $userid;		// ID of user for user specific OAuth entries
+
 
 	/**
 	 * @param 	DoliDB 	$db					Database handler
-	 * @param 	Conf 	$conf				Conf object
+	 * @param 	\Conf 	$notused			Conf object (not used as parameter, used with global $conf)
 	 * @param	string	$keyforprovider		Key to manage several providers of the same type. For example 'abc' will be added to 'Google' to defined storage key.
+	 * @param	string	$tenant				Value of tenant if used
 	 */
-	public function __construct(DoliDB $db, $conf, $keyforprovider = '')
+	public function __construct(DoliDB $db, \Conf $notused, $keyforprovider = '', $tenant = '')
 	{
 		$this->db = $db;
-		$this->conf = $conf;
 		$this->keyforprovider = $keyforprovider;
+		$this->token = '';
 		$this->tokens = array();
 		$this->states = array();
+		$this->tenant = $tenant;
 		//$this->key = $key;
 		//$this->stateKey = $stateKey;
 	}
@@ -96,24 +103,33 @@ class DoliStorage implements TokenStorageInterface
 	/**
 	 * {@inheritDoc}
 	 */
-	public function storeAccessToken($service, TokenInterface $token)
+	public function storeAccessToken($service, TokenInterface $tokenobj)
 	{
 		global $conf;
 
 		//var_dump("storeAccessToken");
 		//var_dump($token);
-		dol_syslog("storeAccessToken service=".$service);
+		dol_syslog(__METHOD__." storeAccessToken service=".$service);
+
+		$servicepluskeyforprovider = $service;
+		if (!empty($this->keyforprovider)) {
+			// We clean the keyforprovider after the - to be sure it is not present
+			$servicepluskeyforprovider = preg_replace('/\-'.preg_quote($this->keyforprovider, '/').'$/', '', $servicepluskeyforprovider);
+			// Now we add the keyforprovider
+			$servicepluskeyforprovider .= '-'.$this->keyforprovider;
+		}
 
 		include_once DOL_DOCUMENT_ROOT.'/core/lib/security.lib.php';
-		$serializedToken = dolEncrypt(serialize($token));
-
-		$this->tokens[$service] = $token;
+		$serializedToken = serialize($tokenobj);
 
 		if (!is_array($this->tokens)) {
 			$this->tokens = array();
 		}
+
+		$this->tokens[$service] = $tokenobj;
+
 		$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."oauth_token";
-		$sql .= " WHERE service = '".$this->db->escape($service.($this->keyforprovider?'-'.$this->keyforprovider:''))."'";
+		$sql .= " WHERE service = '".$this->db->escape($servicepluskeyforprovider)."'";
 		$sql .= " AND entity IN (".getEntity('oauth_token').")";
 		$resql = $this->db->query($sql);
 		if (! $resql) {
@@ -123,16 +139,22 @@ class DoliStorage implements TokenStorageInterface
 		if ($obj) {
 			// update
 			$sql = "UPDATE ".MAIN_DB_PREFIX."oauth_token";
-			$sql.= " SET token = '".$this->db->escape($serializedToken)."'";
-			$sql.= " WHERE rowid = ".((int) $obj['rowid']);
+			$sql .= " SET token = '".$this->db->escape(dolEncrypt($serializedToken))."'";
+			$sql .= " WHERE rowid = ".((int) $obj['rowid']);
 			$resql = $this->db->query($sql);
+			if (!$resql) {
+				dol_print_error($this->db);
+			}
 		} else {
 			// save
 			$sql = "INSERT INTO ".MAIN_DB_PREFIX."oauth_token (service, token, entity, datec)";
-			$sql .= " VALUES ('".$this->db->escape($service.($this->keyforprovider?'-'.$this->keyforprovider:''))."', '".$this->db->escape($serializedToken)."', ".((int) $conf->entity).", ";
-			$sql .= " '".$this->db->idate(dol_now())."'";
+			$sql .= " VALUES ('".$this->db->escape($servicepluskeyforprovider)."', '".$this->db->escape(dolEncrypt($serializedToken))."', ".((int) $conf->entity).", ";
+			$sql .= "'".$this->db->idate(dol_now())."'";
 			$sql .= ")";
 			$resql = $this->db->query($sql);
+			if (!$resql) {
+				dol_print_error($this->db);
+			}
 		}
 		//print $sql;
 
@@ -141,35 +163,55 @@ class DoliStorage implements TokenStorageInterface
 	}
 
 	/**
-	 * {@inheritDoc}
+	 * 	Load token and other data from a $service
+	 *  Note: Token load is cumulated into array $this->tokens but other properties are just erased by the last loaded token.
+	 *
+	 *  @return boolean		True if success and a token exists, false if not
 	 */
 	public function hasAccessToken($service)
 	{
 		// get from db
 		dol_syslog("hasAccessToken service=".$service);
 
+		$servicepluskeyforprovider = $service;
+		if (!empty($this->keyforprovider)) {
+			// We clean the keyforprovider after the - to be sure it is not present
+			$servicepluskeyforprovider = preg_replace('/\-'.preg_quote($this->keyforprovider, '/').'$/', '', $servicepluskeyforprovider);
+			// Now we add the keyforprovider
+			$servicepluskeyforprovider .= '-'.$this->keyforprovider;
+		}
+
 		$sql = "SELECT token, datec, tms, state FROM ".MAIN_DB_PREFIX."oauth_token";
-		$sql .= " WHERE service = '".$this->db->escape($service.(empty($this->keyforprovider) ? '' : '-'.$this->keyforprovider))."'";
+		$sql .= " WHERE service = '".$this->db->escape($servicepluskeyforprovider)."'";
 		$sql .= " AND entity IN (".getEntity('oauth_token').")";
+
 		$resql = $this->db->query($sql);
 		if (! $resql) {
 			dol_print_error($this->db);
 		}
 		$result = $this->db->fetch_array($resql);
+
 		if ($result) {
 			include_once DOL_DOCUMENT_ROOT.'/core/lib/security.lib.php';
-			$token = unserialize(dolDecrypt($result['token']));
+			$tokenobj = unserialize(dolDecrypt($result['token']));
+			if ($result['token'] && empty($tokenobj)) {
+				dol_syslog("Error: We found a record for the OAuth token of '.$servicepluskeyforprovider.', we we failed to decrypt it. May be the crypt/decrypt key has been modifier ?", LOG_WARNING);
+				//print "Error: We found a record for the OAuth token of ".$servicepluskeyforprovider.", we we failed to decrypt it. May be the crypt/decrypt key has been modifier ?";
+				return false;
+			}
+			$this->token = dolDecrypt($result['token']);
 			$this->date_creation = $this->db->jdate($result['datec']);
 			$this->date_modification = $this->db->jdate($result['tms']);
 			$this->state = $result['state'];
 		} else {
-			$token = '';
+			$tokenobj = '';
+			$this->token = '';
 			$this->date_creation = null;
 			$this->date_modification = null;
 			$this->state = '';
 		}
 
-		$this->tokens[$service] = $token;
+		$this->tokens[$service] = $tokenobj;
 
 		return is_array($this->tokens)
 		&& isset($this->tokens[$service])
@@ -190,9 +232,14 @@ class DoliStorage implements TokenStorageInterface
 		//if (is_array($tokens) && array_key_exists($service, $tokens)) {
 		//    unset($tokens[$service]);
 
+		$servicepluskeyforprovider = $service.($this->keyforprovider ? '-'.$this->keyforprovider : '');
+
 		$sql = "DELETE FROM ".MAIN_DB_PREFIX."oauth_token";
-		$sql .= " WHERE service = '".$this->db->escape($service.($this->keyforprovider?'-'.$this->keyforprovider:''))."'";
+		$sql .= " WHERE service = '".$this->db->escape($servicepluskeyforprovider)."'";
 		$sql .= " AND entity IN (".getEntity('oauth_token').")";
+		if (!empty($this->userid)) {
+			$sql .= " AND fk_user = ".((int) $this->userid);
+		}
 		$resql = $this->db->query($sql);
 		//}
 
@@ -205,8 +252,16 @@ class DoliStorage implements TokenStorageInterface
 	 */
 	public function clearAllTokens()
 	{
-		// TODO
-		$this->conf->remove($this->key);
+		// TODO Remove token using a loop on each $service
+		/*
+		$servicepluskeyforprovider = $service;
+		if (!empty($this->keyforprovider)) {
+			// We clean the keyforprovider after the - to be sure it is not present
+			$servicepluskeyforprovider = preg_replace('/\-'.preg_quote($this->keyforprovider, '/').'$/', '', $servicepluskeyforprovider);
+			// Now we add the keyforprovider
+			$servicepluskeyforprovider .= '-'.$this->keyforprovider;
+		}
+		*/
 
 		// allow chaining
 		return $this;
@@ -243,9 +298,10 @@ class DoliStorage implements TokenStorageInterface
 
 		//$newstate = preg_replace('/\-.*$/', '', $state);
 		$newstate = $state;
+		$servicepluskeyforprovider = $service.($this->keyforprovider ? '-'.$this->keyforprovider : '');
 
 		$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."oauth_token";
-		$sql .= " WHERE service = '".$this->db->escape($service.($this->keyforprovider?'-'.$this->keyforprovider:''))."'";
+		$sql .= " WHERE service = '".$this->db->escape($servicepluskeyforprovider)."'";
 		$sql .= " AND entity IN (".getEntity('oauth_token').")";
 		$resql = $this->db->query($sql);
 		if (! $resql) {
@@ -255,13 +311,15 @@ class DoliStorage implements TokenStorageInterface
 		if ($obj) {
 			// update
 			$sql = "UPDATE ".MAIN_DB_PREFIX."oauth_token";
-			$sql.= " SET state = '".$this->db->escape($newstate)."'";
-			$sql.= " WHERE rowid = ".((int) $obj['rowid']);
+			$sql .= " SET state = '".$this->db->escape($newstate)."'";
+			$sql .= " WHERE rowid = ".((int) $obj['rowid']);
 			$resql = $this->db->query($sql);
 		} else {
 			// insert (should not happen)
-			$sql = "INSERT INTO ".MAIN_DB_PREFIX."oauth_token (service, state, entity)";
-			$sql.= " VALUES ('".$this->db->escape($service.($this->keyforprovider?'-'.$this->keyforprovider:''))."', '".$this->db->escape($newstate)."', ".((int) $conf->entity).")";
+			$sql = "INSERT INTO ".MAIN_DB_PREFIX."oauth_token (service, state, entity, datec)";
+			$sql .= " VALUES ('".$this->db->escape($servicepluskeyforprovider)."', '".$this->db->escape($newstate)."', ".((int) $conf->entity).", ";
+			$sql .= "'".$this->db->idate(dol_now())."'";
+			$sql .= ")";
 			$resql = $this->db->query($sql);
 		}
 
@@ -277,8 +335,10 @@ class DoliStorage implements TokenStorageInterface
 		// get state from db
 		dol_syslog("hasAuthorizationState service=".$service);
 
+		$servicepluskeyforprovider = $service.($this->keyforprovider ? '-'.$this->keyforprovider : '');
+
 		$sql = "SELECT state FROM ".MAIN_DB_PREFIX."oauth_token";
-		$sql .= " WHERE service = '".$this->db->escape($service.($this->keyforprovider?'-'.$this->keyforprovider:''))."'";
+		$sql .= " WHERE service = '".$this->db->escape($servicepluskeyforprovider)."'";
 		$sql .= " AND entity IN (".getEntity('oauth_token').")";
 
 		$resql = $this->db->query($sql);
@@ -301,13 +361,9 @@ class DoliStorage implements TokenStorageInterface
 	{
 		// TODO
 		// get previously saved tokens
-		//$states = $this->conf->get($this->stateKey);
 
 		if (is_array($this->states) && array_key_exists($service, $this->states)) {
 			unset($this->states[$service]);
-
-			// Replace the stored tokens array
-			//$this->conf->set($this->stateKey, $states);
 		}
 
 		// allow chaining
@@ -320,9 +376,32 @@ class DoliStorage implements TokenStorageInterface
 	public function clearAllAuthorizationStates()
 	{
 		// TODO
-		//$this->conf->remove($this->stateKey);
 
 		// allow chaining
 		return $this;
+	}
+
+	/**
+	 * Return the token
+	 *
+	 * @return string	String for the tenant used to create the token
+	 */
+	public function getTenant()
+	{
+		// Set/Reset tenant now so it will be defined for.
+		// TODO We must store it into the table llx_oauth_token
+		//$this->tenant = getDolGlobalString('OAUTH_MICROSOFT'.($this->keyforprovider ? '-'.$this->keyforprovider : '').'_TENANT');
+
+		return $this->tenant;
+	}
+
+	/**
+	 * Return the keyforprovider
+	 *
+	 * @return string	String for the accurate key provider identification
+	 */
+	public function getKeyForProvider()
+	{
+		return $this->keyforprovider;
 	}
 }

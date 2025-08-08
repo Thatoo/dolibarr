@@ -4,6 +4,7 @@
  * Copyright (C) 2019       Andreu Bisquerra Gaya   <jove@bisquerra.com>
  * Copyright (C) 2021       Nicolas ZABOURI         <info@inovea-conseil.com>
  * Copyright (C) 2022       Alexandre Spangaro      <aspangaro@open-dsi.fr>
+ * Copyright (C) 2024       Frédéric France         <frederic.france@free.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +33,14 @@ require_once DOL_DOCUMENT_ROOT.'/product/class/html.formproduct.class.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/pdf.lib.php';
 require_once DOL_DOCUMENT_ROOT."/core/lib/takepos.lib.php";
 
+/**
+ * @var Conf $conf
+ * @var DoliDB $db
+ * @var HookManager $hookmanager
+ * @var Translate $langs
+ * @var User $user
+ */
+
 // Security check
 if (!$user->admin) {
 	accessforbidden();
@@ -43,6 +52,7 @@ $langs->loadLangs(array("admin", "cashdesk", "commercial"));
 /*
  * Actions
  */
+$error = 0;
 
 if (GETPOST('action', 'alpha') == 'set') {
 	$db->begin();
@@ -82,7 +92,7 @@ if (GETPOST('action', 'alpha') == 'set') {
 $form = new Form($db);
 $formproduct = new FormProduct($db);
 
-llxHeader('', $langs->trans("CashDeskSetup"));
+llxHeader('', $langs->trans("CashDeskSetup"), '', '', 0, 0, '', '', '', 'mod-takepos page-admin_receipt');
 
 $linkback = '<a href="'.DOL_URL_ROOT.'/admin/modules.php">'.$langs->trans("BackToModuleList").'</a>';
 print load_fiche_titre($langs->trans("CashDeskSetup").' (TakePOS)', $linkback, 'title_setup');
@@ -92,75 +102,6 @@ print dol_get_fiche_head($head, 'receipt', 'TakePOS', -1, 'cash-register');
 print '<form action="'.$_SERVER["PHP_SELF"].'?terminal='.(empty($terminal) ? 1 : $terminal).'" method="post">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
 print '<input type="hidden" name="action" value="set">';
-
-print load_fiche_titre($langs->trans("PrintMethod"), '', '');
-
-print '<div class="div-table-responsive-no-min">';
-print '<table class="noborder centpercent">';
-print '<tr class="liste_titre">';
-print '<td>'.$langs->trans("Name").'</td><td>'.$langs->trans("Description").'</td><td class="right">'.$langs->trans("Status").'</td>';
-print "</tr>\n";
-
-// Browser method
-print '<tr class="oddeven"><td>';
-print $langs->trans('Browser');
-print '<td>';
-print $langs->trans('BrowserMethodDescription');
-print '</td><td class="right">';
-if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "browser") {
-	print img_picto($langs->trans("Activated"), 'switch_on');
-} else {
-	print '<a class="reposition" href="'.$_SERVER["PHP_SELF"].'?action=setmethod&token='.newToken().'&value=browser">'.img_picto($langs->trans("Disabled"), 'switch_off').'</a>';
-}
-print "</td></tr>\n";
-
-// Receipt printer module
-print '<tr class="oddeven"><td>';
-print $langs->trans('DolibarrReceiptPrinter');
-print '<td>';
-print $langs->trans('ReceiptPrinterMethodDescription');
-if (isModEnabled('receiptprinter')) {
-	if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "receiptprinter") {
-		print '<br>';
-		print img_picto('', 'printer', 'class="paddingright"').'<a href="'.DOL_URL_ROOT.'/admin/receiptprinter.php">'.$langs->trans("Setup").'</a>';
-	}
-}
-print '</td><td class="right">';
-if (isModEnabled('receiptprinter')) {
-	if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "receiptprinter") {
-		print img_picto($langs->trans("Activated"), 'switch_on');
-	} else {
-		print '<a class="reposition" href="'.$_SERVER["PHP_SELF"].'?action=setmethod&token='.newToken().'&value=receiptprinter">'.img_picto($langs->trans("Disabled"), 'switch_off').'</a>';
-	}
-} else {
-	print '<span class="opacitymedium">';
-	print $langs->trans("ModuleReceiptPrinterMustBeEnabled");
-	print '</span>';
-}
-print "</td></tr>\n";
-
-// TakePOS Connector
-print '<tr class="oddeven"><td>';
-print "TakePOS Connector";
-print '<td>';
-print $langs->trans('TakeposConnectorMethodDescription');
-
-if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "takeposconnector") {
-	print '<br>';
-	print $langs->trans("URL")." / ".$langs->trans("IPAddress").' (<a href="http://en.takepos.com/connector" target="_blank" rel="noopener noreferrer external">'.$langs->trans("TakeposConnectorNecesary").'</a>)';
-	print ' <input type="text" class="minwidth200" id="TAKEPOS_PRINT_SERVER" name="TAKEPOS_PRINT_SERVER" value="'.getDolGlobalString('TAKEPOS_PRINT_SERVER').'">';
-}
-
-print '</td><td class="right">';
-if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "takeposconnector") {
-	print img_picto($langs->trans("Activated"), 'switch_on');
-} else {
-	print '<a class="reposition" href="'.$_SERVER["PHP_SELF"].'?action=setmethod&token='.newToken().'&value=takeposconnector">'.img_picto($langs->trans("Disabled"), 'switch_off').'</a>';
-}
-print "</td></tr>\n";
-print '</table>';
-print '</div>';
-
 
 print load_fiche_titre($langs->trans("Receipt"), '', '');
 
@@ -178,8 +119,9 @@ print ajax_constantonoff("TAKEPOS_TICKET_VAT_GROUPPED", array(), $conf->entity, 
 print "</td></tr>\n";
 
 if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "browser" || getDolGlobalString('TAKEPOS_PRINT_METHOD') == "takeposconnector") {
-	$substitutionarray = pdf_getSubstitutionArray($langs, null, null, 2);
+	$substitutionarray = pdf_getSubstitutionArray($langs, array('ticket', 'member', 'candidate'), null, 2, array('company', 'user', 'object', 'system'));
 	$substitutionarray['__(AnyTranslationKey)__'] = $langs->trans("Translation");
+
 	$htmltext = '<i>'.$langs->trans("AvailableVariables").':<br>';
 	foreach ($substitutionarray as $key => $val) {
 		$htmltext .= $key.'<br>';
@@ -231,14 +173,6 @@ if (getDolGlobalString('TAKEPOS_PRINT_METHOD') == "browser" || getDolGlobalStrin
 	print "</td></tr>\n";
 }
 
-// Auto print tickets
-print '<tr class="oddeven"><td>';
-print $langs->trans("AutoPrintTickets");
-print '<td colspan="2">';
-print ajax_constantonoff("TAKEPOS_AUTO_PRINT_TICKETS", array(), $conf->entity, 0, 0, 1, 0);
-print "</td></tr>\n";
-
-
 // Show price without vat
 print '<tr class="oddeven"><td>';
 print $langs->trans('ShowPriceHTOnReceipt');
@@ -276,14 +210,31 @@ if (getDolGlobalString('TAKEPOS_PRINT_WITHOUT_DETAILS')) {
 	print "</td></tr>\n";
 }
 
+// Auto print tickets
+print '<tr class="oddeven"><td>';
+print $langs->trans("AutoPrintTickets");
+print '<td colspan="2">';
+print ajax_constantonoff("TAKEPOS_AUTO_PRINT_TICKETS", array(), $conf->entity, 0, 0, 1, 0);
+print "</td></tr>\n";
+
+
 print '</table>';
 print '</div>';
-
-print '<br>';
 
 print $form->buttonsSaveCancel("Save", '');
 
 print "</form>\n";
+
+
+print '<br>';
+
+
+print load_fiche_titre($langs->trans("Preview"), '', '');
+print '<div style="width: 50%; float:center;background-color:#606060">';
+print '<center>';
+print '<iframe id="iframe" allowtransparency="true" style="background: #FFFFFF;" src="../receipt.php" width="80%" height="600"></iframe>';
+print '</center>';
+print '</div>';
 
 print '<br>';
 

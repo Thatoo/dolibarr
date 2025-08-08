@@ -2,6 +2,8 @@
 /* Copyright (C) 2017       ATM Consulting      <contact@atm-consulting.fr>
  * Copyright (C) 2017-2020  Laurent Destailleur <eldy@destailleur.fr>
  * Copyright (C) 2022 		charlene benke		<charlene@patas-monkey.com>
+ * Copyright (C) 2024-2025	MDW						<mdeweerd@users.noreply.github.com>
+ * Copyright (C) 2024-2025  Frédéric France			<frederic.france@free.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +27,11 @@
  */
 class BlockedLog
 {
+	/**
+	 * @var DoliDB	Database handler
+	 */
+	public $db;
+
 	/**
 	 * Id of the log
 	 * @var int
@@ -59,6 +66,9 @@ class BlockedLog
 	 */
 	public $signature_line = '';
 
+	/**
+	 * @var float|string|null
+	 */
 	public $amounts = null;
 
 	/**
@@ -92,27 +102,53 @@ class BlockedLog
 	public $fk_user = 0;
 
 	/**
-	 * @var integer|string date_creation
+	 * @var int|string
 	 */
 	public $date_creation;
 
 	/**
-	 * @var integer|string $date_modification;
+	 * @var int|string
 	 */
 	public $date_modification;
 
+	/**
+	 * @var int
+	 */
 	public $date_object = 0;
 
+	/**
+	 * @var string
+	 */
 	public $ref_object = '';
 
+	/**
+	 * @var ?stdClass
+	 */
 	public $object_data = null;
+
+	/**
+	 * @var string	Version of application
+	 */
 	public $object_version = '';
 
+	/**
+	 * @var string	Version of format of line ('', 'V1', ...)
+	 */
+	public $object_format = '';
+
+	/**
+	 * @var string
+	 */
 	public $user_fullname = '';
 
 	/**
+	 * @var string
+	 */
+	public $debuginfo;
+
+	/**
 	 * Array of tracked event codes
-	 * @var string[]
+	 * @var array<string,string|mixed>
 	 */
 	public $trackedevents = array();
 
@@ -132,23 +168,23 @@ class BlockedLog
 	/**
 	 * Load list of tracked events into $this->trackedevents.
 	 *
-	 * @return int			Always 1
+	 * @return int<1,1>		Always 1
 	 */
 	public function loadTrackedEvents()
 	{
-		global $conf;
+		global $langs;
 
 		$this->trackedevents = array();
 
 		// Customer Invoice/Facture / Payment
-		if (isModEnabled('facture')) {
-			$this->trackedevents['BILL_VALIDATE'] = 'logBILL_VALIDATE';
-			$this->trackedevents['BILL_DELETE'] = 'logBILL_DELETE';
-			$this->trackedevents['BILL_SENTBYMAIL'] = 'logBILL_SENTBYMAIL';
-			$this->trackedevents['DOC_DOWNLOAD'] = 'BlockedLogBillDownload';
-			$this->trackedevents['DOC_PREVIEW'] = 'BlockedLogBillPreview';
-			$this->trackedevents['PAYMENT_CUSTOMER_CREATE'] = 'logPAYMENT_CUSTOMER_CREATE';
-			$this->trackedevents['PAYMENT_CUSTOMER_DELETE'] = 'logPAYMENT_CUSTOMER_DELETE';
+		if (isModEnabled('invoice')) {
+			$this->trackedevents['BILL_VALIDATE'] = array('id' => 'BILL_VALIDATE', 'label' => 'logBILL_VALIDATE', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('logBILL_VALIDATE'));
+			//$this->trackedevents['BILL_UPDATE'] = array('id' => 'BILL_VALIDATE', 'label' => 'logBILL_UPDATE', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('logBILL_UPDATE'));
+			$this->trackedevents['BILL_SENTBYMAIL'] = array('id' => 'BILL_SENTBYMAIL', 'label' => 'logBILL_SENTBYMAIL', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('logBILL_SENTBYMAIL'));
+			$this->trackedevents['DOC_DOWNLOAD'] = array('id' => 'DOC_DOWNLOAD', 'label' => 'BlockedLogBillDownload', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('BlockedLogBillDownload'));
+			$this->trackedevents['DOC_PREVIEW'] = array('id' => 'DOC_PREVIEW', 'label' => 'BlockedLogBillPreview', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('BlockedLogBillPreview'));
+			$this->trackedevents['PAYMENT_CUSTOMER_CREATE'] = array('id' => 'PAYMENT_CUSTOMER_CREATE', 'label' => 'logPAYMENT_CUSTOMER_CREATE', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('logPAYMENT_CUSTOMER_CREATE'));
+			$this->trackedevents['PAYMENT_CUSTOMER_DELETE'] = array('id' => 'PAYMENT_CUSTOMER_DELETE', 'label' => 'logPAYMENT_CUSTOMER_DELETE', 'labelhtml' => img_picto('', 'bill', 'class="pictofixedwidth").').$langs->trans('logPAYMENT_CUSTOMER_DELETE'));
 		}
 
 		/* Supplier
@@ -175,7 +211,7 @@ class BlockedLog
 
 		/*
 		// Salary
-		if (!empty($conf->salary->enabled)) {
+		if (isModEnabled('salary')) {
 			$this->trackedevents['PAYMENT_SALARY_CREATE']='BlockedLogSalaryPaymentCreate';
 			$this->trackedevents['PAYMENT_SALARY_MODIFY']='BlockedLogSalaryPaymentCreate';
 			$this->trackedevents['PAYMENT_SALARY_DELETE']='BlockedLogSalaryPaymentCreate';
@@ -183,14 +219,14 @@ class BlockedLog
 		 */
 
 		// Members
-		if (isModEnabled('adherent')) {
+		if (isModEnabled('member')) {
 			$this->trackedevents['MEMBER_SUBSCRIPTION_CREATE'] = 'logMEMBER_SUBSCRIPTION_CREATE';
 			$this->trackedevents['MEMBER_SUBSCRIPTION_MODIFY'] = 'logMEMBER_SUBSCRIPTION_MODIFY';
 			$this->trackedevents['MEMBER_SUBSCRIPTION_DELETE'] = 'logMEMBER_SUBSCRIPTION_DELETE';
 		}
 
 		// Bank
-		if (isModEnabled("banque")) {
+		if (isModEnabled("bank")) {
 			$this->trackedevents['PAYMENT_VARIOUS_CREATE'] = 'logPAYMENT_VARIOUS_CREATE';
 			$this->trackedevents['PAYMENT_VARIOUS_MODIFY'] = 'logPAYMENT_VARIOUS_MODIFY';
 			$this->trackedevents['PAYMENT_VARIOUS_DELETE'] = 'logPAYMENT_VARIOUS_DELETE';
@@ -198,18 +234,21 @@ class BlockedLog
 
 		// Cashdesk
 		// $conf->global->BANK_ENABLE_POS_CASHCONTROL must be set to 1 by all external POS modules
-		$moduleposenabled = (!empty($conf->cashdesk->enabled) || !empty($conf->takepos->enabled) || !empty($conf->global->BANK_ENABLE_POS_CASHCONTROL));
+		$moduleposenabled = (isModEnabled('cashdesk') || isModEnabled('takepos') || getDolGlobalString('BANK_ENABLE_POS_CASHCONTROL'));
 		if ($moduleposenabled) {
 			$this->trackedevents['CASHCONTROL_VALIDATE'] = 'logCASHCONTROL_VALIDATE';
 		}
 
 		// Add more action to track from a conf variable
-		if (!empty($conf->global->BLOCKEDLOG_ADD_ACTIONS_SUPPORTED)) {
-			$tmparrayofmoresupportedevents = explode(',', $conf->global->BLOCKEDLOG_ADD_ACTIONS_SUPPORTED);
+		// For example: STOCK_MOVEMENT,...
+		if (getDolGlobalString('BLOCKEDLOG_ADD_ACTIONS_SUPPORTED')) {
+			$tmparrayofmoresupportedevents = explode(',', getDolGlobalString('BLOCKEDLOG_ADD_ACTIONS_SUPPORTED'));
 			foreach ($tmparrayofmoresupportedevents as $val) {
 				$this->trackedevents[$val] = 'log'.$val;
 			}
 		}
+
+		$this->trackedevents['BLOCKEDLOG_EXPORT'] = 'logBLOCKEDLOG_EXPORT';
 
 		return 1;
 	}
@@ -230,7 +269,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		}
 		if ($this->element === 'invoice_supplier') {
@@ -240,7 +279,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'payment') {
 			require_once DOL_DOCUMENT_ROOT.'/compta/paiement/class/paiement.class.php';
@@ -249,7 +288,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'payment_supplier') {
 			require_once DOL_DOCUMENT_ROOT.'/fourn/class/paiementfourn.class.php';
@@ -258,7 +297,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'payment_donation') {
 			require_once DOL_DOCUMENT_ROOT.'/don/class/paymentdonation.class.php';
@@ -267,7 +306,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'payment_various') {
 			require_once DOL_DOCUMENT_ROOT.'/compta/bank/class/paymentvarious.class.php';
@@ -276,7 +315,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'don' || $this->element === 'donation') {
 			require_once DOL_DOCUMENT_ROOT.'/don/class/don.class.php';
@@ -285,7 +324,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'subscription') {
 			require_once DOL_DOCUMENT_ROOT.'/adherents/class/subscription.class.php';
@@ -294,7 +333,7 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
 		} elseif ($this->element === 'cashcontrol') {
 			require_once DOL_DOCUMENT_ROOT.'/compta/cashcontrol/class/cashcontrol.class.php';
@@ -303,8 +342,28 @@ class BlockedLog
 			if ($object->fetch($this->fk_object) > 0) {
 				return $object->getNomUrl(1);
 			} else {
-				$this->error++;
+				$this->error = (string) (((int) $this->error) + 1);
 			}
+		} elseif ($this->element === 'stockmouvement') {
+			require_once DOL_DOCUMENT_ROOT.'/product/stock/class/mouvementstock.class.php';
+
+			$object = new MouvementStock($this->db);
+			if ($object->fetch($this->fk_object) > 0) {
+				return $object->getNomUrl(1);
+			} else {
+				$this->error = (string) (((int) $this->error) + 1);
+			}
+		} elseif ($this->element === 'project') {
+			require_once DOL_DOCUMENT_ROOT.'/projet/class/project.class.php';
+
+			$object = new Project($this->db);
+			if ($object->fetch($this->fk_object) > 0) {
+				return $object->getNomUrl(1);
+			} else {
+				$this->error = (string) (((int) $this->error) + 1);
+			}
+		} elseif ($this->action == 'BLOCKEDLOG_EXPORT') {
+			return '<i class="opacitymedium">'.$langs->trans("logBLOCKEDLOG_EXPORT").'</i>';
 		} elseif ($this->action == 'MODULE_SET') {
 			return '<i class="opacitymedium">'.$langs->trans("BlockedLogEnabled").'</i>';
 		} elseif ($this->action == 'MODULE_RESET') {
@@ -319,7 +378,8 @@ class BlockedLog
 	}
 
 	/**
-	 *      try to retrieve user author
+	 * Try to retrieve user author
+	 *
 	 * @return string
 	 */
 	public function getUser()
@@ -345,13 +405,13 @@ class BlockedLog
 	}
 
 	/**
-	 *      Populate properties of log from object data
+	 *	Populate properties of an unalterable log entry from object data
 	 *
-	 *      @param		Object		$object     object to store
-	 *      @param		string		$action     action
-	 *      @param		string		$amounts    amounts
-	 *      @param		User		$fuser		User object (forced)
-	 *      @return		int						>0 if OK, <0 if KO
+	 *	@param	CommonObject|stdClass	$object		object to store
+	 *	@param	string					$action		action
+	 *	@param	float|int				$amounts	amounts
+	 *	@param	?User					$fuser		User object (forced)
+	 *	@return	int<-1,-1>|int<1,1>					>0 if OK, <0 if KO
 	 */
 	public function setObjectData(&$object, $action, $amounts, $fuser = null)
 	{
@@ -369,18 +429,28 @@ class BlockedLog
 		$this->amounts = $amounts;
 		// date
 		if ($object->element == 'payment' || $object->element == 'payment_supplier') {
+			'@phan-var-force Paiement|PaiementFourn $object';
 			$this->date_object = empty($object->datepaye) ? $object->date : $object->datepaye;
 		} elseif ($object->element == 'payment_salary') {
+			'@phan-var-force PaymentSalary $object';
 			$this->date_object = $object->datev;
 		} elseif ($object->element == 'payment_donation' || $object->element == 'payment_various') {
+			'@phan-var-force PaymentDonation $object';
 			$this->date_object = empty($object->datepaid) ? $object->datep : $object->datepaid;
 		} elseif ($object->element == 'subscription') {
+			'@phan-var-force Subscription $object';
 			$this->date_object = $object->dateh;
 		} elseif ($object->element == 'cashcontrol') {
+			'@phan-var-force CashControl $object';
 			$this->date_object = $object->date_creation;
-		} else {
-			$this->date_object = $object->date;
+		} elseif (property_exists($object, 'date')) {
+			// Generic case
+			$this->date_object = $object->date; // @phan-suppress-current-line PhanUndeclaredProperty
+		} elseif (property_exists($object, 'datem')) {
+			// Generic case (second chance, for example for stock movement)
+			$this->date_object = $object->datem; // @phan-suppress-current-line PhanUndeclaredProperty
 		}
+
 		// ref
 		$this->ref_object = ((!empty($object->newref)) ? $object->newref : $object->ref); // newref is set when validating a draft, ref is set in other cases
 		// type of object
@@ -395,11 +465,18 @@ class BlockedLog
 		$arrayoffieldstoexclude = array(
 			'table_element', 'fields', 'ref_previous', 'ref_next', 'origin', 'origin_id', 'oldcopy', 'picto', 'error', 'errors', 'model_pdf', 'modelpdf', 'last_main_doc', 'civility_id', 'contact', 'contact_id',
 			'table_element_line', 'ismultientitymanaged', 'isextrafieldmanaged',
+			'array_languages',
+			'childtables',
+			'contact_ids',
+			'context',
+			'labelStatus',
+			'labelStatusShort',
 			'linkedObjectsIds',
 			'linkedObjects',
 			'fk_delivery_address',
-			'context',
-			'projet'          // There is already ->fk_project
+			'projet',          // There is already ->fk_project
+			'restrictiononfksoc',
+			'specimen',
 		);
 		// Add more fields to exclude depending on object type
 		if ($this->element == 'cashcontrol') {
@@ -428,7 +505,7 @@ class BlockedLog
 					continue; // Discard if not into a dedicated list
 				}
 				if (!is_object($value) && !is_null($value) && $value !== '') {
-					$this->object_data->thirdparty->{$key} = $value;
+					$this->object_data->thirdparty->$key = $value;
 				}
 			}
 		}
@@ -448,7 +525,7 @@ class BlockedLog
 					continue; // Discard if not into a dedicated list
 				}
 				if (!is_object($value) && !is_null($value) && $value !== '') {
-					$this->object_data->mycompany->{$key} = $value;
+					$this->object_data->mycompany->$key = $value;
 				}
 			}
 		}
@@ -461,12 +538,14 @@ class BlockedLog
 
 		// Field specific to object
 		if ($this->element == 'facture') {
+			'@phan-var-force Facture $object';
 			foreach ($object as $key => $value) {
 				if (in_array($key, $arrayoffieldstoexclude)) {
 					continue; // Discard some properties
 				}
 				if (!in_array($key, array(
-					'ref', 'ref_client', 'ref_supplier', 'date', 'datef', 'datev', 'type', 'total_ht', 'total_tva', 'total_ttc', 'localtax1', 'localtax2', 'revenuestamp', 'datepointoftax', 'note_public', 'lines'
+					'ref', 'ref_client', 'ref_supplier', 'date', 'datef', 'datev', 'type', 'total_ht', 'total_tva', 'total_ttc', 'localtax1', 'localtax2', 'revenuestamp', 'datepointoftax', 'note_public', 'lines',
+					'module_source', 'pos_source'
 				))) {
 					continue; // Discard if not into a dedicated list
 				}
@@ -476,7 +555,13 @@ class BlockedLog
 						$lineid++;
 						foreach ($tmpline as $keyline => $valueline) {
 							if (!in_array($keyline, array(
-								'ref', 'multicurrency_code', 'multicurrency_total_ht', 'multicurrency_total_tva', 'multicurrency_total_ttc', 'qty', 'product_type', 'vat_src_code', 'tva_tx', 'info_bits', 'localtax1_tx', 'localtax2_tx', 'total_ht', 'total_tva', 'total_ttc', 'total_localtax1', 'total_localtax2'
+								'ref', 'product_type', 'product_label',
+								'qty',
+								'subprice',
+								'vat_src_code', 'tva_tx', 'localtax1_tx', 'localtax2_tx',
+								'total_ht', 'total_tva', 'total_ttc', 'total_localtax1', 'total_localtax2',
+								'multicurrency_code', 'multicurrency_total_ht', 'multicurrency_total_tva', 'multicurrency_total_ttc',
+								'info_bits', 'special_code',
 							))) {
 								continue; // Discard if not into a dedicated list
 							}
@@ -486,12 +571,12 @@ class BlockedLog
 							}
 
 							if (!is_object($valueline) && !is_null($valueline) && $valueline !== '') {
-								$this->object_data->invoiceline[$lineid]->{$keyline} = $valueline;
+								$this->object_data->invoiceline[$lineid]->$keyline = $valueline;
 							}
 						}
 					}
 				} elseif (!is_object($value) && !is_null($value) && $value !== '') {
-					$this->object_data->{$key} = $value;
+					$this->object_data->$key = $value;
 				}
 			}
 
@@ -499,6 +584,7 @@ class BlockedLog
 				$this->object_data->ref = $object->newref;
 			}
 		} elseif ($this->element == 'invoice_supplier') {
+			'@phan-var-force FactureFournisseur $object';
 			foreach ($object as $key => $value) {
 				if (in_array($key, $arrayoffieldstoexclude)) {
 					continue; // Discard some properties
@@ -509,7 +595,7 @@ class BlockedLog
 					continue; // Discard if not into a dedicated list
 				}
 				if (!is_object($value) && !is_null($value) && $value !== '') {
-					$this->object_data->{$key} = $value;
+					$this->object_data->$key = $value;
 				}
 			}
 
@@ -517,6 +603,7 @@ class BlockedLog
 				$this->object_data->ref = $object->newref;
 			}
 		} elseif ($this->element == 'payment' || $this->element == 'payment_supplier' || $this->element == 'payment_donation' || $this->element == 'payment_various') {
+			'@phan-var-force Paiement|PaiementFourn|PaymentDonation|PaymentVarious $object';
 			$datepayment = $object->datepaye ? $object->datepaye : ($object->datepaid ? $object->datepaid : $object->datep);
 			$paymenttypeid = $object->paiementid ? $object->paiementid : ($object->paymenttype ? $object->paymenttype : $object->type_payment);
 
@@ -601,7 +688,7 @@ class BlockedLog
 								continue; // Discard if not into a dedicated list
 							}
 							if (!is_object($value) && !is_null($value) && $value !== '') {
-								$paymentpart->thirdparty->{$key} = $value;
+								$paymentpart->thirdparty->$key = $value;
 							}
 						}
 					}
@@ -625,11 +712,11 @@ class BlockedLog
 							}
 							if (!is_object($value) && !is_null($value) && $value !== '') {
 								if ($this->element == 'payment_donation') {
-									$paymentpart->donation->{$key} = $value;
+									$paymentpart->donation->$key = $value;
 								} elseif ($this->element == 'payment_various') {
-									$paymentpart->various->{$key} = $value;
+									$paymentpart->various->$key = $value;
 								} else {
-									$paymentpart->invoice->{$key} = $value;
+									$paymentpart->invoice->$key = $value;
 								}
 							}
 						}
@@ -648,12 +735,14 @@ class BlockedLog
 				$this->object_data->ref = $object->newref;
 			}
 		} elseif ($this->element == 'payment_salary') {
+			'@phan-var-force PaymentSalary $object';
 			$this->object_data->amounts = array($object->amount);
 
 			if (!empty($object->newref)) {
 				$this->object_data->ref = $object->newref;
 			}
 		} elseif ($this->element == 'subscription') {
+			'@phan-var-force Subscription $object';
 			foreach ($object as $key => $value) {
 				if (in_array($key, $arrayoffieldstoexclude)) {
 					continue; // Discard some properties
@@ -664,21 +753,31 @@ class BlockedLog
 					continue; // Discard if not into a dedicated list
 				}
 				if (!is_object($value) && !is_null($value) && $value !== '') {
-					$this->object_data->{$key} = $value;
+					$this->object_data->$key = $value;
 				}
 			}
 
 			if (!empty($object->newref)) {
 				$this->object_data->ref = $object->newref;
 			}
-		} else // Generic case
-		{
+		} elseif ($this->element == 'stockmouvement') {
+			'@phan-var-force StockTransfer $object';
 			foreach ($object as $key => $value) {
 				if (in_array($key, $arrayoffieldstoexclude)) {
 					continue; // Discard some properties
 				}
 				if (!is_object($value) && !is_null($value) && $value !== '') {
-					$this->object_data->{$key} = $value;
+					$this->object_data->$key = $value;
+				}
+			}
+		} else {
+			// Generic case
+			foreach ($object as $key => $value) {
+				if (in_array($key, $arrayoffieldstoexclude)) {
+					continue; // Discard some properties
+				}
+				if (!is_object($value) && !is_null($value) && $value !== '') {
+					$this->object_data->$key = $value;
 				}
 			}
 
@@ -687,6 +786,10 @@ class BlockedLog
 			}
 		}
 
+		// A trick to be sure all the object_data is an associative array
+		// json_encode and json_decode are not able to manage mixed object (with array/object, only full arrays or full objects)
+		$this->object_data = json_decode(json_encode($this->object_data, JSON_FORCE_OBJECT), false);
+
 		return 1;
 	}
 
@@ -694,7 +797,7 @@ class BlockedLog
 	 *	Get object from database
 	 *
 	 *	@param      int		$id       	Id of object to load
-	 *	@return     int         			>0 if OK, <0 if KO, 0 if not found
+	 *	@return     int<-1,1>			>0 if OK, <0 if KO, 0 if not found
 	 */
 	public function fetch($id)
 	{
@@ -706,7 +809,7 @@ class BlockedLog
 		}
 
 		$sql = "SELECT b.rowid, b.date_creation, b.signature, b.signature_line, b.amounts, b.action, b.element, b.fk_object, b.entity,";
-		$sql .= " b.certified, b.tms, b.fk_user, b.user_fullname, b.date_object, b.ref_object, b.object_data, b.object_version";
+		$sql .= " b.certified, b.tms, b.fk_user, b.user_fullname, b.date_object, b.ref_object, b.object_data, b.object_version, b.object_format";
 		$sql .= " FROM ".MAIN_DB_PREFIX."blockedlog as b";
 		if ($id) {
 			$sql .= " WHERE b.rowid = ".((int) $id);
@@ -716,15 +819,14 @@ class BlockedLog
 		if ($resql) {
 			$obj = $this->db->fetch_object($resql);
 			if ($obj) {
-				$this->id = $obj->rowid;
-				$this->entity = $obj->entity;
-				$this->ref				= $obj->rowid;
+				$this->id 				= $obj->rowid;
+				$this->entity 			= $obj->entity;
 
-				$this->date_creation = $this->db->jdate($obj->date_creation);
-				$this->tms				= $this->db->jdate($obj->tms);
+				$this->date_creation 	= $this->db->jdate($obj->date_creation);
+				$this->date_modification = $this->db->jdate($obj->tms);
 
-				$this->amounts			= (double) $obj->amounts;
-				$this->action = $obj->action;
+				$this->amounts			= (float) $obj->amounts;
+				$this->action 			= $obj->action;
 				$this->element			= $obj->element;
 
 				$this->fk_object = $obj->fk_object;
@@ -736,15 +838,16 @@ class BlockedLog
 
 				$this->object_data = $this->dolDecodeBlockedData($obj->object_data);
 				$this->object_version = $obj->object_version;
+				$this->object_format = $obj->object_format;
 
 				$this->signature		= $obj->signature;
-				$this->signature_line = $obj->signature_line;
+				$this->signature_line 	= $obj->signature_line;
 				$this->certified		= ($obj->certified == 1);
 
 				return 1;
 			} else {
-				$langs->load("blockedlog");
-				$this->error = $langs->trans("RecordNotFound");
+				$langs->load("errors");
+				$this->error = $langs->trans("ErrorRecordNotFound");
 				return 0;
 			}
 		} else {
@@ -755,33 +858,53 @@ class BlockedLog
 
 
 	/**
-	 * Decode data
+	 * Encode data
 	 *
-	 * @param	string	$data	Data to unserialize
-	 * @param	string	$mode	0=unserialize, 1=json_decode
-	 * @return 	string			Value unserialized
+	 * @param	?stdClass	$data	Data to serialize
+	 * @param	int<0,1>	$mode	0=serialize, 1=json_encode
+	 * @return 	string				Value serialized, an object (stdClass)
 	 */
-	public function dolDecodeBlockedData($data, $mode = 0)
+	public function dolEncodeBlockedData($data, $mode = 0)
 	{
+		$aaa = '';
 		try {
-			//include_once DOL_DOCUMENT_ROOT.'/compta/facture/class/facture.class.php';
-			$aaa = unserialize($data);
+			$aaa = json_encode($data);
 		} catch (Exception $e) {
-			//print $e->getErrs);
+			// print $e->getErrs);
 		}
+
 		return $aaa;
 	}
 
 
 	/**
-	 *	Set block certified by authority
+	 * Decode data
+	 *
+	 * @param	string	$data	Data to unserialize
+	 * @param	int		$mode	0=unserialize, 1=json_decode
+	 * @return 	Object			Value unserialized, an object (stdClass)
+	 */
+	public function dolDecodeBlockedData($data, $mode = 0)
+	{
+		$aaa = null;
+		try {
+			$aaa = (object) jsonOrUnserialize($data);
+		} catch (Exception $e) {
+			// print $e->getErrs);
+		}
+
+		return $aaa;
+	}
+
+
+	/**
+	 *	Set block certified by an external authority
 	 *
 	 *	@return	boolean
 	 */
 	public function setCertified()
 	{
-
-		$res = $this->db->query("UPDATE ".MAIN_DB_PREFIX."blockedlog SET certified=1 WHERE rowid=".((int) $this->id));
+		$res = $this->db->query("UPDATE ".MAIN_DB_PREFIX."blockedlog SET certified = 1 WHERE rowid = ".((int) $this->id));
 		if (!$res) {
 			return false;
 		}
@@ -793,19 +916,17 @@ class BlockedLog
 	 *	Create blocked log in database.
 	 *
 	 *	@param	User	$user      			Object user that create
-	 *  @param	int		$forcesignature		Force signature (for example '0000000000' when we disabled the module)
-	 *	@return	int							<0 if KO, >0 if OK
+	 *  @param	string	$forcesignature		Force signature (for example '0000000000' when we disabled the module)
+	 *	@return	int<-3,-1>|int<1,1>				Return integer <0 if KO, >0 if OK
 	 */
 	public function create($user, $forcesignature = '')
 	{
-		global $conf, $langs, $hookmanager;
+		global $conf, $langs;
 
 		$langs->load('blockedlog');
 
-		$error = 0;
-
 		// Clean data
-		$this->amounts = (double) $this->amounts;
+		$this->amounts = (float) $this->amounts;
 
 		dol_syslog(get_class($this).'::create action='.$this->action.' fk_user='.$this->fk_user.' user_fullname='.$this->user_fullname, LOG_DEBUG);
 
@@ -833,20 +954,26 @@ class BlockedLog
 
 		$this->date_creation = dol_now();
 
+		$this->object_version = DOL_VERSION;
+		$this->object_format = 'V1';	// Must match the rules into buildKeyForSignature and buildFirstPartOfKeyForSignature
+
+
 		$this->db->begin();
 
-		$previoushash = $this->getPreviousHash(1, 0); // This get last record and lock database until insert is done
+		$previoushash = $this->getPreviousHash(1, 0); // This get last record and lock database until insert is done and transaction closed
 
-		$keyforsignature = $this->buildKeyForSignature();
+		$concatenatedata = $this->buildKeyForSignature();	// All the information for the hash (meta data + data saved)
+
+		$this->debuginfo = $this->buildFirstPartOfKeyForSignature();
 
 		include_once DOL_DOCUMENT_ROOT.'/core/lib/security.lib.php';
 
-		$this->signature_line = dol_hash($keyforsignature, '5'); // Not really usefull
-		$this->signature = dol_hash($previoushash.$keyforsignature, '5');
+		$this->signature_line = dol_hash($concatenatedata, '5'); // Not really useful
+		$this->signature = dol_hash($previoushash.$concatenatedata, '5');
 		if ($forcesignature) {
 			$this->signature = $forcesignature;
 		}
-		//var_dump($keyforsignature);var_dump($previoushash);var_dump($this->signature_line);var_dump($this->signature);
+		//var_dump($concatenatedata);var_dump($previoushash);var_dump($this->signature_line);var_dump($this->signature);
 
 		$sql = "INSERT INTO ".MAIN_DB_PREFIX."blockedlog (";
 		$sql .= " date_creation,";
@@ -860,10 +987,12 @@ class BlockedLog
 		$sql .= " ref_object,";
 		$sql .= " object_data,";
 		$sql .= " object_version,";
+		$sql .= " object_format,";
 		$sql .= " certified,";
 		$sql .= " fk_user,";
 		$sql .= " user_fullname,";
-		$sql .= " entity";
+		$sql .= " entity,";
+		$sql .= " debuginfo";	// Only stored
 		$sql .= ") VALUES (";
 		$sql .= "'".$this->db->idate($this->date_creation)."',";
 		$sql .= "'".$this->db->escape($this->action)."',";
@@ -871,16 +1000,26 @@ class BlockedLog
 		$sql .= "'".$this->db->escape($this->signature)."',";
 		$sql .= "'".$this->db->escape($this->signature_line)."',";
 		$sql .= "'".$this->db->escape($this->element)."',";
-		$sql .= $this->fk_object.",";
+		$sql .= (int) $this->fk_object.",";
 		$sql .= "'".$this->db->idate($this->date_object)."',";
 		$sql .= "'".$this->db->escape($this->ref_object)."',";
-		$sql .= "'".$this->db->escape(serialize($this->object_data))."',";
+		$sql .= "'".$this->db->escape($this->dolEncodeBlockedData($this->object_data))."',";
 		$sql .= "'".$this->db->escape($this->object_version)."',";
+		$sql .= "'".$this->db->escape($this->object_format)."',";
 		$sql .= "0,";
 		$sql .= $this->fk_user.",";
 		$sql .= "'".$this->db->escape($this->user_fullname)."',";
-		$sql .= ($this->entity ? $this->entity : $conf->entity);
+		$sql .= ($this->entity ? $this->entity : $conf->entity).",";
+		$sql .= "'".$this->db->escape($this->debuginfo)."'";
 		$sql .= ")";
+
+		/*
+		$a = serialize($this->object_data); $a2 = unserialize($a); $a4 = print_r($a2, true);
+		$b = json_encode($this->object_data); $b2 = json_decode($b); $b4 = print_r($b2, true);
+		var_dump($a4 == print_r($this->object_data, true) ? 'a=a' : 'a not = a');
+		var_dump($b4 == print_r($this->object_data, true) ? 'b=b' : 'b not = b');
+		exit;
+		*/
 
 		$res = $this->db->query($sql);
 		if ($res) {
@@ -909,20 +1048,21 @@ class BlockedLog
 	 *	Check if current signature still correct compared to the value in chain
 	 *
 	 *	@param	string			$previoushash		If previous signature hash is known, we can provide it to avoid to make a search of it in database.
-	 *  @param	int				$returnarray		1=Return array of details, 2=Return array of details including keyforsignature, 0=Boolean
-	 *	@return	boolean|array						True if OK, False if KO
+	 *  @param	int<0,2>		$returnarray		1=Return array of details, 2=Return array of details including keyforsignature, 0=Boolean
+	 *	@return	boolean|array{checkresult:bool,calculatedsignature:string,previoushash:string,keyforsignature?:string}	True if OK, False if KO
 	 */
 	public function checkSignature($previoushash = '', $returnarray = 0)
 	{
 		if (empty($previoushash)) {
 			$previoushash = $this->getPreviousHash(0, $this->id);
 		}
-		// Recalculate hash
-		$keyforsignature = $this->buildKeyForSignature();
 
-		//$signature_line = dol_hash($keyforsignature, '5'); // Not really usefull
-		$signature = dol_hash($previoushash.$keyforsignature, '5');
-		//var_dump($previoushash); var_dump($keyforsignature); var_dump($signature_line); var_dump($signature);
+		// Build the string for the signature
+		$concatenatedata = $this->buildKeyForSignature();
+
+		//$signature_line = dol_hash($concatenatedata, '5'); // Not really useful
+		$signature = dol_hash($previoushash.$concatenatedata, 'sha256');
+		//var_dump($previoushash); var_dump($concatenatedata); var_dump($signature_line); var_dump($signature);
 
 		$res = ($signature === $this->signature);
 
@@ -932,13 +1072,13 @@ class BlockedLog
 
 		if ($returnarray) {
 			if ($returnarray == 1) {
-				unset($keyforsignature);
+				unset($concatenatedata);
 				return array('checkresult' => $res, 'calculatedsignature' => $signature, 'previoushash' => $previoushash);
-			} else {	// Consume much memory ($keyforsignature is a large var)
-				return array('checkresult' => $res, 'calculatedsignature' => $signature, 'previoushash' => $previoushash, 'keyforsignature'=>$keyforsignature);
+			} else {	// Consume much memory ($concatenatedata is a large var)
+				return array('checkresult' => $res, 'calculatedsignature' => $signature, 'previoushash' => $previoushash, 'keyforsignature' => $concatenatedata);
 			}
 		} else {
-			unset($keyforsignature);
+			unset($concatenatedata);
 			return $res;
 		}
 	}
@@ -946,27 +1086,43 @@ class BlockedLog
 	/**
 	 * Return a string for signature.
 	 * Note: rowid of line not included as it is not a business data and this allow to make backup of a year
-	 * and restore it into another database with different id wihtout comprimising checksums
+	 * and restore it into another database with different ids without comprimising checksums
 	 *
 	 * @return string		Key for signature
 	 */
 	private function buildKeyForSignature()
 	{
 		//print_r($this->object_data);
-		if (((int) $this->object_version) > 12) {
-			return $this->date_creation.'|'.$this->action.'|'.$this->amounts.'|'.$this->ref_object.'|'.$this->date_object.'|'.$this->user_fullname.'|'.print_r($this->object_data, true);
+		if ($this->object_format == '') {
+			return $this->buildFirstPartOfKeyForSignature().'|'.print_r($this->object_data, true);
+		} elseif ($this->object_format == 'V1') {
+			// Note: $this->amounts can be '0', '1.1', '1.123';  // All 0 at end should have been removed already
+			return $this->buildFirstPartOfKeyForSignature().'|'.json_encode($this->object_data, JSON_FORCE_OBJECT);
 		} else {
-			return $this->date_creation.'|'.$this->action.'|'.$this->amounts.'|'.$this->ref_object.'|'.$this->date_object.'|'.$this->user_fullname.'|'.print_r($this->object_data, true);
+			return 'Error bad value "'.$this->object_format.'" for object_format';
 		}
+	}
+
+	/**
+	 * Return first part of string for signature.
+	 * Note: rowid of line not included as it is not a business data and this allow to make backup of a year
+	 * and restore it into another database with different ids without comprimising checksums
+	 *
+	 * @return string		First part of key for signature
+	 */
+	private function buildFirstPartOfKeyForSignature()
+	{
+		// Note: $this->amounts can be '0', '1.1', '1.123';  // All 0 at end should have been removed already
+		return $this->date_creation.'|'.$this->action.'|'.$this->amounts.'|'.$this->ref_object.'|'.$this->date_object.'|'.$this->user_fullname;
 	}
 
 
 	/**
 	 *	Get previous signature/hash in chain
 	 *
-	 *	@param int	$withlock		1=With a lock
-	 *	@param int	$beforeid		ID of a record
-	 *  @return	string				Hash of previous record (if beforeid is defined) or hash of last record (if beforeid is 0)
+	 *	@param int<0,1>	$withlock		1=With a lock
+	 *	@param int		$beforeid		ID of a record
+	 *  @return	string					Hash of previous record (if beforeid is defined) or hash of last record (if beforeid is 0)
 	 */
 	public function getPreviousHash($withlock = 0, $beforeid = 0)
 	{
@@ -974,23 +1130,47 @@ class BlockedLog
 
 		$previoussignature = '';
 
-		$sql = "SELECT rowid, signature FROM ".MAIN_DB_PREFIX."blockedlog";
-		$sql .= " WHERE entity=".$conf->entity;
+		// Fast search of previous record by searching with beforeid - 1. This is very fast and will work 99% of time.
 		if ($beforeid) {
-			$sql .= " AND rowid < ".(int) $beforeid;
-		}
-		$sql .= " ORDER BY rowid DESC LIMIT 1";
-		$sql .= ($withlock ? " FOR UPDATE " : "");
+			$sql = "SELECT rowid, signature FROM ".MAIN_DB_PREFIX."blockedlog";
+			$sql .= " WHERE entity = ".((int) $conf->entity);
+			$sql .= " AND rowid = ".((int) $beforeid - 1);
+			$sql .= ($withlock ? " FOR UPDATE " : "");
 
-		$resql = $this->db->query($sql);
-		if ($resql) {
-			$obj = $this->db->fetch_object($resql);
-			if ($obj) {
-				$previoussignature = $obj->signature;
+			$resql = $this->db->query($sql);
+			if ($resql) {
+				$obj = $this->db->fetch_object($resql);
+				if ($obj) {
+					$previoussignature = $obj->signature;
+				}
+			} else {
+				dol_print_error($this->db);
+				exit;
 			}
-		} else {
-			dol_print_error($this->db);
-			exit;
+		}
+
+		if (empty($previoussignature)) {
+			$sql = "SELECT rowid, signature FROM ".MAIN_DB_PREFIX."blockedlog";
+			if ($beforeid) {
+				$sql .= $this->db->hintindex('entity_rowid', 1);
+			}
+			$sql .= " WHERE entity = ".((int) $conf->entity);
+			if ($beforeid) {
+				$sql .= " AND rowid < ".(int) $beforeid;
+			}
+			$sql .= " ORDER BY rowid DESC LIMIT 1";
+			$sql .= ($withlock ? " FOR UPDATE " : "");
+
+			$resql = $this->db->query($sql);
+			if ($resql) {
+				$obj = $this->db->fetch_object($resql);
+				if ($obj) {
+					$previoussignature = $obj->signature;
+				}
+			} else {
+				dol_print_error($this->db);
+				exit;
+			}
 		}
 
 		if (empty($previoussignature)) {
@@ -1002,22 +1182,23 @@ class BlockedLog
 	}
 
 	/**
-	 *	Return array of log objects (with criterias)
+	 *	Return array of log objects (with criteria)
 	 *
-	 *	@param	string 	$element      	element to search
-	 *	@param	int 	$fk_object		id of object to search
-	 *	@param	int 	$limit      	max number of element, 0 for all
-	 *	@param	string 	$sortfield     	sort field
-	 *	@param	string 	$sortorder     	sort order
-	 *	@param	int 	$search_fk_user id of user(s)
-	 *	@param	int 	$search_start   start time limit
-	 *	@param	int 	$search_end     end time limit
-	 *  @param	string	$search_ref		search ref
-	 *  @param	string	$search_amount	search amount
-	 *  @param	string	$search_code	search code
-	 *	@return	array|int				Array of object log or <0 if error
+	 *	@param	string 					$element      		Element to search
+	 *	@param	int		 				$fk_object			Id of object to search
+	 *	@param	int<0,max> 				$limit      		Max number of element, 0 for all
+	 *	@param	string 					$sortfield     		Sort field
+	 *	@param	string 					$sortorder     		Sort order
+	 *	@param	int 					$search_fk_user 	Id of user(s)
+	 *	@param	int 					$search_start   	Start time limit
+	 *	@param	int 					$search_end     	End time limit
+	 *  @param	string					$search_ref			Search ref
+	 *  @param	string					$search_amount		Search amount
+	 *  @param	string|string[]	        $search_code		Search code
+	 *  @param	string			        $search_signature	Search signature
+	 *	@return	BlockedLog[]|int<-2,-1>						Array of object log or <0 if error
 	 */
-	public function getLog($element, $fk_object, $limit = 0, $sortfield = '', $sortorder = '', $search_fk_user = -1, $search_start = -1, $search_end = -1, $search_ref = '', $search_amount = '', $search_code = '')
+	public function getLog($element, $fk_object, $limit = 0, $sortfield = '', $sortorder = '', $search_fk_user = -1, $search_start = -1, $search_end = -1, $search_ref = '', $search_amount = '', $search_code = '', $search_signature = '')
 	{
 		global $conf;
 		//global $cachedlogs;
@@ -1027,23 +1208,23 @@ class BlockedLog
 
 		if ($element == 'all') {
 			$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."blockedlog
-			 WHERE entity=".$conf->entity;
+			 WHERE entity = ".$conf->entity;
 		} elseif ($element == 'not_certified') {
 			$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."blockedlog
-			 WHERE entity=".$conf->entity." AND certified = 0";
+			 WHERE entity = ".$conf->entity." AND certified = 0";
 		} elseif ($element == 'just_certified') {
 			$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."blockedlog
-			 WHERE entity=".$conf->entity." AND certified = 1";
+			 WHERE entity = ".$conf->entity." AND certified = 1";
 		} else {
 			$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."blockedlog
-			 WHERE entity=".$conf->entity." AND element='".$this->db->escape($element)."'";
+			 WHERE entity = ".$conf->entity." AND element = '".$this->db->escape($element)."'";
 		}
 
 		if ($fk_object) {
-			$sql .= natural_search("rowid", $fk_object, 1);
+			$sql .= natural_search("rowid", (string) $fk_object, 1);
 		}
 		if ($search_fk_user > 0) {
-			$sql .= natural_search("fk_user", $search_fk_user, 2);
+			$sql .= natural_search("fk_user", (string) $search_fk_user, 2);
 		}
 		if ($search_start > 0) {
 			$sql .= " AND date_creation >= '".$this->db->idate($search_start)."'";
@@ -1057,8 +1238,17 @@ class BlockedLog
 		if ($search_amount != '') {
 			$sql .= natural_search("amounts", $search_amount, 1);
 		}
-		if ($search_code != '' && $search_code != '-1') {
-			$sql .= natural_search("action", $search_code, 3);
+		if ($search_signature != '') {
+			$sql .= natural_search("signature", $search_signature, 0);
+		}
+		if (is_array($search_code)) {
+			if (!empty($search_code)) {
+				$sql .= natural_search("action", implode(',', $search_code), 3);
+			}
+		} else {
+			if ($search_code != '' && $search_code != '-1') {
+				$sql .= natural_search("action", $search_code, 3);
+			}
 		}
 
 		$sql .= $this->db->order($sortfield, $sortorder);
@@ -1103,12 +1293,12 @@ class BlockedLog
 	{
 		global $db, $conf, $mysoc;
 
-		if (empty($conf->global->BLOCKEDLOG_ENTITY_FINGERPRINT)) { // creation of a unique fingerprint
+		if (!getDolGlobalString('BLOCKEDLOG_ENTITY_FINGERPRINT')) { // creation of a unique fingerprint
 			require_once DOL_DOCUMENT_ROOT.'/core/lib/admin.lib.php';
 			require_once DOL_DOCUMENT_ROOT.'/core/lib/security.lib.php';
 			require_once DOL_DOCUMENT_ROOT.'/core/lib/security2.lib.php';
 
-			$fingerprint = dol_hash(print_r($mysoc, true).getRandomPassword(1), '5');
+			$fingerprint = dol_hash(print_r($mysoc, true).getRandomPassword(true), '5');
 
 			dolibarr_set_const($db, 'BLOCKEDLOG_ENTITY_FINGERPRINT', $fingerprint, 'chaine', 0, 'Numeric Unique Fingerprint', $conf->entity);
 
@@ -1122,7 +1312,7 @@ class BlockedLog
 	/**
 	 * Check if module was already used or not for at least one recording.
 	 *
-	 * @param   int     $ignoresystem       Ignore system events for the test
+	 * @param   int<0,1>	$ignoresystem       Ignore system events for the test
 	 * @return  bool
 	 */
 	public function alreadyUsed($ignoresystem = 0)
@@ -1132,7 +1322,7 @@ class BlockedLog
 		$result = false;
 
 		$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."blockedlog";
-		$sql .= " WHERE entity = ".$conf->entity;
+		$sql .= " WHERE entity = ".((int) $conf->entity);
 		if ($ignoresystem) {
 			$sql .= " AND action not in ('MODULE_SET','MODULE_RESET')";
 		}
@@ -1148,7 +1338,7 @@ class BlockedLog
 			dol_print_error($this->db);
 		}
 
-		dol_syslog("Module Blockedlog alreadyUsed with ignoresystem=".$ignoresystem." is ".$result);
+		dol_syslog("Module Blockedlog alreadyUsed(ignoresystem=".$ignoresystem.") returns ".json_encode($result));
 
 		return $result;
 	}
